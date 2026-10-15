@@ -1,0 +1,43 @@
+# Local stack: API + MCP tool server + Postgres checkpointer (+ optional Temporal).
+#   docker compose up --build
+#   docker compose --profile temporal up --build
+services:
+  postgres:
+    image: postgres:16
+    environment: { POSTGRES_USER: agent, POSTGRES_PASSWORD: agent, POSTGRES_DB: agent }
+    ports: ["5432:5432"]
+    volumes: [pg:/var/lib/postgresql/data]
+
+  tools:
+    build: .
+    command: ["python", "-m", "supportagent.tools.mcp_server", "--http", "--port", "8001"]
+    ports: ["8001:8001"]
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      CHECKPOINT_URL: postgresql://agent:agent@postgres:5432/agent
+      TOOLS_MCP_URL: http://tools:8001/mcp
+    ports: ["8080:8080"]
+    depends_on: [postgres, tools]
+
+  temporal:
+    profiles: [temporal]
+    image: temporalio/auto-setup:1.25
+    environment: { DB: postgres12, DB_PORT: 5432, POSTGRES_USER: agent, POSTGRES_PWD: agent, POSTGRES_SEEDS: postgres }
+    ports: ["7233:7233"]
+    depends_on: [postgres]
+
+  worker:
+    profiles: [temporal]
+    build: .
+    env_file: .env
+    command: ["python", "-m", "supportagent.temporal.worker"]
+    environment:
+      CHECKPOINT_URL: postgresql://agent:agent@postgres:5432/agent
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on: [temporal]
+
+volumes:
+  pg:
